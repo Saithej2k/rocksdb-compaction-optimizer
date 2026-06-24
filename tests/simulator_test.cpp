@@ -35,6 +35,22 @@ int main() {
   Expect(pending_aware.PickLevel(input) == scheduler.PickLevel(input),
          "pending-aware scoring should match legacy without pending bytes");
 
+  compaction::Scheduler hysteresis(
+      compaction::Strategy::kPendingFlushHysteresis);
+  input.level_bytes = {80.0, 120.0, 20.0, 10.0};
+  input.pending_flush_bytes = 0.0;
+  input.switch_hysteresis = 0.10;
+  Expect(hysteresis.PickLevel(input) == 1,
+         "hysteresis should initialize from the highest score");
+
+  input.level_bytes[0] = 125.0;
+  Expect(hysteresis.PickLevel(input) == 1,
+         "hysteresis should ignore a marginally higher challenger");
+
+  input.level_bytes[0] = 140.0;
+  Expect(hysteresis.PickLevel(input) == 0,
+         "hysteresis should switch for a materially higher challenger");
+
   compaction::SimulationConfig small_config;
   small_config.operations = 50'000;
   const auto first =
@@ -53,6 +69,11 @@ int main() {
       compaction::Strategy::kPendingFlushAware, small_config);
   Expect(optimized.stalled_writes <= first.stalled_writes,
          "pending-aware scoring should not increase write stalls");
+
+  const auto stabilized = compaction::RunSimulation(
+      compaction::Strategy::kPendingFlushHysteresis, small_config);
+  Expect(stabilized.scheduler_switches <= optimized.scheduler_switches,
+         "hysteresis should not increase scheduler switches");
 
   std::cout << "all tests passed\n";
 }
