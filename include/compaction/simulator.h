@@ -12,6 +12,7 @@ constexpr std::size_t kLevelCount = 4;
 enum class Strategy {
   kLegacy,
   kPendingFlushAware,
+  kPendingFlushHysteresis,
 };
 
 struct SchedulerInput {
@@ -19,6 +20,7 @@ struct SchedulerInput {
   std::array<double, kLevelCount> target_bytes{};
   double pending_flush_bytes = 0.0;
   double pending_flush_weight = 1.0;
+  double switch_hysteresis = 0.05;
 };
 
 class Scheduler {
@@ -29,6 +31,8 @@ class Scheduler {
 
  private:
   Strategy strategy_;
+  bool initialized_ = false;
+  std::size_t selected_level_ = 0;
 };
 
 struct SimulationConfig {
@@ -47,6 +51,7 @@ struct SimulationConfig {
   double l0_hard_limit_bytes = 8.0 * 1024.0 * 1024.0;
   double output_ratio = 0.88;
   double pending_flush_weight = 1.0;
+  double switch_hysteresis = 0.05;
 
   std::array<double, kLevelCount> target_bytes{
       2.0 * 1024.0 * 1024.0,

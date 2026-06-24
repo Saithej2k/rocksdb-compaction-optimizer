@@ -26,20 +26,43 @@ class XorShift64 {
 Scheduler::Scheduler(Strategy strategy) : strategy_(strategy) {}
 
 std::size_t Scheduler::PickLevel(const SchedulerInput& input) {
-  std::size_t selected = 0;
+  std::array<double, kLevelCount> scores{};
+  std::size_t candidate = 0;
   double best_score = -1.0;
   for (std::size_t level = 0; level < kLevelCount; ++level) {
     double bytes = input.level_bytes[level];
-    if (strategy_ == Strategy::kPendingFlushAware && level == 0) {
+    if (strategy_ != Strategy::kLegacy && level == 0) {
       bytes += input.pending_flush_bytes * input.pending_flush_weight;
     }
-    const double score = bytes / input.target_bytes[level];
-    if (score > best_score) {
-      selected = level;
-      best_score = score;
+    scores[level] = bytes / input.target_bytes[level];
+    if (scores[level] > best_score) {
+      candidate = level;
+      best_score = scores[level];
     }
   }
-  return selected;
+
+  if (strategy_ != Strategy::kPendingFlushHysteresis) {
+    return candidate;
+  }
+
+  if (!initialized_) {
+    initialized_ = true;
+    selected_level_ = candidate;
+    return selected_level_;
+  }
+
+  const double current_score = scores[selected_level_];
+  const bool current_level_drained =
+      input.level_bytes[selected_level_] <
+      input.target_bytes[selected_level_] * 0.01;
+  const bool challenger_is_materially_higher =
+      best_score > current_score * (1.0 + input.switch_hysteresis);
+
+  if (candidate != selected_level_ &&
+      (current_level_drained || challenger_is_materially_higher)) {
+    selected_level_ = candidate;
+  }
+  return selected_level_;
 }
 
 double SimulationResult::StallRatePercent() const {
@@ -57,6 +80,8 @@ std::string StrategyName(Strategy strategy) {
       return "legacy";
     case Strategy::kPendingFlushAware:
       return "pending-flush-aware";
+    case Strategy::kPendingFlushHysteresis:
+      return "pending-flush-hysteresis";
   }
   return "unknown";
 }
@@ -114,6 +139,7 @@ SimulationResult RunSimulation(Strategy strategy,
       input.target_bytes = config.target_bytes;
       input.pending_flush_bytes = pending_flush_bytes;
       input.pending_flush_weight = config.pending_flush_weight;
+      input.switch_hysteresis = config.switch_hysteresis;
       selected_level = scheduler.PickLevel(input);
       ++result.level_selections[selected_level];
       if (operation != 0 && selected_level != previous_level) {
