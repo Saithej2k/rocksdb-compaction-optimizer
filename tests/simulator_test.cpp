@@ -25,6 +25,16 @@ int main() {
   Expect(scheduler.PickLevel(input) == 1,
          "legacy scoring should select the largest current level score");
 
+  compaction::Scheduler pending_aware(
+      compaction::Strategy::kPendingFlushAware);
+  input.pending_flush_bytes = 50.0;
+  Expect(pending_aware.PickLevel(input) == 0,
+         "pending-aware scoring should include queued flush bytes in L0");
+
+  input.pending_flush_bytes = 0.0;
+  Expect(pending_aware.PickLevel(input) == scheduler.PickLevel(input),
+         "pending-aware scoring should match legacy without pending bytes");
+
   compaction::SimulationConfig small_config;
   small_config.operations = 50'000;
   const auto first =
@@ -39,6 +49,10 @@ int main() {
   Expect(std::isfinite(first.StallRatePercent()),
          "stall rate should be finite");
 
+  const auto optimized = compaction::RunSimulation(
+      compaction::Strategy::kPendingFlushAware, small_config);
+  Expect(optimized.stalled_writes <= first.stalled_writes,
+         "pending-aware scoring should not increase write stalls");
+
   std::cout << "all tests passed\n";
 }
-
