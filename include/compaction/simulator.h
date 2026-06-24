@@ -11,12 +11,14 @@ constexpr std::size_t kLevelCount = 4;
 
 enum class Strategy {
   kLegacy,
+  kPendingFlushAware,
 };
 
 struct SchedulerInput {
   std::array<double, kLevelCount> level_bytes{};
   std::array<double, kLevelCount> target_bytes{};
   double pending_flush_bytes = 0.0;
+  double pending_flush_weight = 1.0;
 };
 
 class Scheduler {
@@ -35,17 +37,19 @@ struct SimulationConfig {
   std::uint64_t seed = 0x5eed1234ULL;
 
   double bytes_per_write = 256.0;
-  double memtable_flush_bytes = 64.0 * 1024.0;
+  double memtable_flush_bytes = 2.0 * 1024.0 * 1024.0;
   double flush_bytes_per_operation = 420.0;
   double compaction_bytes_per_operation = 245.0;
   std::uint64_t scheduling_quantum = 128;
+  std::uint64_t compaction_setup_operations = 40;
 
   double max_pending_flush_bytes = 5.0 * 1024.0 * 1024.0;
   double l0_hard_limit_bytes = 8.0 * 1024.0 * 1024.0;
   double output_ratio = 0.88;
+  double pending_flush_weight = 1.0;
 
   std::array<double, kLevelCount> target_bytes{
-      4.0 * 1024.0 * 1024.0,
+      2.0 * 1024.0 * 1024.0,
       32.0 * 1024.0 * 1024.0,
       256.0 * 1024.0 * 1024.0,
       2048.0 * 1024.0 * 1024.0,
@@ -78,4 +82,3 @@ SimulationResult RunSimulation(Strategy strategy,
 std::string StrategyName(Strategy strategy);
 
 }  // namespace compaction
-

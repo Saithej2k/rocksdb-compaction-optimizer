@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <stdexcept>
 
 namespace compaction {
 namespace {
@@ -27,15 +26,14 @@ class XorShift64 {
 Scheduler::Scheduler(Strategy strategy) : strategy_(strategy) {}
 
 std::size_t Scheduler::PickLevel(const SchedulerInput& input) {
-  if (strategy_ != Strategy::kLegacy) {
-    throw std::invalid_argument("unsupported compaction strategy");
-  }
-
   std::size_t selected = 0;
   double best_score = -1.0;
   for (std::size_t level = 0; level < kLevelCount; ++level) {
-    const double score =
-        input.level_bytes[level] / input.target_bytes[level];
+    double bytes = input.level_bytes[level];
+    if (strategy_ == Strategy::kPendingFlushAware && level == 0) {
+      bytes += input.pending_flush_bytes * input.pending_flush_weight;
+    }
+    const double score = bytes / input.target_bytes[level];
     if (score > best_score) {
       selected = level;
       best_score = score;
@@ -57,6 +55,8 @@ std::string StrategyName(Strategy strategy) {
   switch (strategy) {
     case Strategy::kLegacy:
       return "legacy";
+    case Strategy::kPendingFlushAware:
+      return "pending-flush-aware";
   }
   return "unknown";
 }
@@ -70,6 +70,7 @@ SimulationResult RunSimulation(Strategy strategy,
   double pending_flush_bytes = 0.0;
   std::size_t selected_level = 0;
   std::size_t previous_level = 0;
+  std::uint64_t setup_remaining = config.compaction_setup_operations;
 
   SimulationResult result;
   result.strategy = StrategyName(strategy);
@@ -112,20 +113,26 @@ SimulationResult RunSimulation(Strategy strategy,
       input.level_bytes = level_bytes;
       input.target_bytes = config.target_bytes;
       input.pending_flush_bytes = pending_flush_bytes;
+      input.pending_flush_weight = config.pending_flush_weight;
       selected_level = scheduler.PickLevel(input);
       ++result.level_selections[selected_level];
       if (operation != 0 && selected_level != previous_level) {
         ++result.scheduler_switches;
+        setup_remaining = config.compaction_setup_operations;
       }
       previous_level = selected_level;
     }
 
-    const double compacted =
-        std::min(level_bytes[selected_level],
-                 config.compaction_bytes_per_operation);
-    level_bytes[selected_level] -= compacted;
-    if (selected_level + 1 < kLevelCount) {
-      level_bytes[selected_level + 1] += compacted * config.output_ratio;
+    if (setup_remaining > 0) {
+      --setup_remaining;
+    } else {
+      const double compacted =
+          std::min(level_bytes[selected_level],
+                   config.compaction_bytes_per_operation);
+      level_bytes[selected_level] -= compacted;
+      if (selected_level + 1 < kLevelCount) {
+        level_bytes[selected_level + 1] += compacted * config.output_ratio;
+      }
     }
 
     result.max_pending_flush_bytes =
@@ -138,4 +145,3 @@ SimulationResult RunSimulation(Strategy strategy,
 }
 
 }  // namespace compaction
-
